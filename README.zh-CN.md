@@ -5,7 +5,7 @@
 
 **变异测试驱动的 AI 测试生成闭环 —— [qodo-cover](https://github.com/qodo-ai/qodo-cover)（2025 年 6 月已停止维护）的 MIT 协议继任者。**
 
-行覆盖率是个虚荣指标。`mutest` 往你的代码里注入微小的 bug（变异体），让你的测试套件逐个去抓，按抓获率打分：**变异分数 = 杀死数 / 总数**。没抓到的"幸存者"，让 LLM 针对性地写测试来补——再用*另一个*模型交叉验证，并且实打实跑一遍确认。
+行覆盖率是个虚荣指标。`mutest` 往你的代码里注入微小的 bug（变异体），让你的测试套件逐个去抓，按抓获率打分：**变异分数 = 杀死数 / 总数**。没抓到的"幸存者"，让 LLM 针对性地写测试来补——再用*另一个*模型交叉验证，并且实打实跑一遍确认。超时和执行错误会保留在总数中，并报告为未杀死。
 
 ## ⚡ 30 秒演示（真实输出）
 
@@ -76,6 +76,7 @@ mutest --src src --tests tests --model gpt-4o-mini   # + AI 测试生成闭环
 --top-n 10                       针对多少个幸存者生成测试
 --workers 4 / --timeout 120
 --incremental                    只变异 git HEAD 改动过的文件（PR 场景）
+--base-ref BASE                   PR 基准版本；配合 --incremental 比较 BASE...HEAD
 --json                           输出 {"score": ...} 给 CI 用
 --config mutest.yaml             算子开关等（见 src/mutest/config.py）
 ```
@@ -85,11 +86,12 @@ mutest --src src --tests tests --model gpt-4o-mini   # + AI 测试生成闭环
 ## 🤖 GitHub Action
 
 ```yaml
-- uses: chenyi6758-source/mutest@v0.1.0
+- uses: chenyi6758-source/mutest@main  # 生产环境请固定到具体提交 SHA
   with:
     src: src
     tests: tests
     incremental: "true"
+    base-ref: ${{ github.event.pull_request.base.sha }}
 ```
 
 详见 [`action.yml`](action.yml) 和 [`.github/workflows/mutest-example.yml`](.github/workflows/mutest-example.yml)（示例：在每个 PR 下自动评论变异分数）。
@@ -106,7 +108,7 @@ mutest --src src --tests tests --model gpt-4o-mini   # + AI 测试生成闭环
 用 `--incremental`（只跑改动的文件）、`--workers N`，或在 `mutest.yaml` 里关掉部分算子。变异测试本质是 O(变异体数 × 套件时间)，并行执行 + `-x` 提前退出已经把它压到实用区间。
 
 **生成的测试会联网吗？**
-不会。全本地运行；唯一的网络请求是你用 `--model` 时 litellm 直连你的模型厂商。key 只在你的环境变量里，不进仓库。
+生成的测试在本地执行，运行前会移除类似 secret、token、key、password 的环境变量，但这不是完整的网络沙箱。因此应把生成代码视为不可信代码，只在适当隔离的 CI 环境中运行。mutest 自身只有在你用 `--model` 时才会通过 litellm 直连模型厂商；key 不会写入仓库。
 
 ## 🗺️ 路线图
 

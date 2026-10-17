@@ -9,8 +9,10 @@ from mutest.runner import (
     KILLED,
     SURVIVED,
     BaselineError,
+    RunSummary,
     check_baseline,
     run_mutants,
+    sanitize_environment,
 )
 
 SAMPLE = Path(__file__).resolve().parent.parent / "examples" / "sample_calc"
@@ -62,6 +64,45 @@ def test_summary_score_math():
     assert summary.killed == 1
     assert summary.survived == 1
     assert summary.score == 0.5
+
+
+def test_summary_score_counts_timeout_and_error_in_denominator():
+    summary = RunSummary(total=4, killed=1, survived=1, timeout=1, error=1)
+    assert summary.score == 0.25
+    assert summary.as_dict()["score"] == 0.25
+
+
+def test_secret_like_environment_is_removed_for_test_subprocesses():
+    env = sanitize_environment({
+        "OPENAI_API_KEY": "secret",
+        "GITHUB_TOKEN": "token",
+        "DATABASE_PASSWORD": "password",
+        "SERVICE_KEY": "key",
+        "SAFE_SETTING": "kept",
+    })
+    assert env == {"SAFE_SETTING": "kept"}
+
+
+def test_worker_passes_sanitized_environment_to_pytest(monkeypatch):
+    from mutest.runner import _Worker
+
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured.update(kwargs["env"])
+        return type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    monkeypatch.setenv("SAFE_SETTING", "kept")
+    monkeypatch.setattr("mutest.runner.subprocess.run", fake_run)
+    worker = _Worker(SAMPLE, SAMPLE)
+    try:
+        rc, _ = worker.run_pytest(timeout=1, sanitize_env=True)
+    finally:
+        worker.close()
+    assert rc == 0
+    assert "OPENAI_API_KEY" not in captured
+    assert captured["SAFE_SETTING"] == "kept"
 
 
 def test_parallel_results_deterministic():

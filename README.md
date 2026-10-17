@@ -6,7 +6,7 @@
 
 **Mutation-testing-driven AI test generation — the MIT-licensed successor to [qodo-cover](https://github.com/qodo-ai/qodo-cover) (deprecated June 2025).**
 
-Line coverage is a vanity metric. `mutest` injects small bugs (mutants) into your code, runs your test suite against each one, and scores it: **mutation score = killed / total**. The mutants your suite *fails* to kill get targeted tests written by an LLM — cross-checked by a *different* model and verified by actually running them.
+Line coverage is a vanity metric. `mutest` injects small bugs (mutants) into your code, runs your test suite against each one, and scores it: **mutation score = killed / total**. The mutants your suite *fails* to kill get targeted tests written by an LLM — cross-checked by a *different* model and verified by actually running them. Timeouts and execution errors remain in the total and are reported as not killed.
 
 ## ⚡ 30-second demo (real output)
 
@@ -79,6 +79,7 @@ With `--model`, mutest takes the top survived mutants, asks the LLM for one targ
 --top-n 10                 survived mutants to target
 --workers 4 / --timeout 120
 --incremental              only mutate files changed vs git HEAD (PR runs)
+--base-ref BASE            PR base revision; compare BASE...HEAD with --incremental
 --json                     print {"score": ...} for CI
 --config mutest.yaml       operators on/off, defaults (see src/mutest/config.py)
 ```
@@ -88,11 +89,12 @@ Environment: `MUTEST_MODEL`, `MUTEST_LLM_PROVIDER=fake` (offline demos/tests).
 ## 🤖 GitHub Action
 
 ```yaml
-- uses: chenyi6758-source/mutest@v0.1.0
+- uses: chenyi6758-source/mutest@main  # pin to a full commit SHA in production
   with:
     src: src
     tests: tests
     incremental: "true"     # only changed files on PRs
+    base-ref: ${{ github.event.pull_request.base.sha }}
 ```
 
 See [`action.yml`](action.yml) and [`.github/workflows/mutest-example.yml`](.github/workflows/mutest-example.yml) — the example workflow comments the mutation score on every PR.
@@ -109,7 +111,7 @@ Mark them: open the HTML report, confirm the mutant is truly equivalent, and add
 Use `--incremental` (changed files only), `--workers N`, and shrink the operator set in `mutest.yaml`. Mutation testing is inherently O(mutants × suite time); the parallel executor and `-x` early-exit keep it practical.
 
 **Do the generated tests phone home?**
-No. Everything runs locally; the only network calls are the ones *you* trigger with `--model`, straight from litellm to your provider. Keys live in your env, never in the repo.
+Generated tests execute locally and secret-like environment variables are removed before they run. This is not a full network sandbox, so treat generated code as untrusted and run it only in an appropriately isolated CI environment. The only network call mutest itself makes is the provider request you trigger with `--model`; provider keys are never written to the repo.
 
 ## 🗺️ Roadmap
 

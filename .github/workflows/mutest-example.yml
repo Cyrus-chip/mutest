@@ -1,0 +1,57 @@
+# Example: run mutest on every PR and comment the mutation score.
+#
+# Copy this file to .github/workflows/mutest.yml in your own repo.
+# Scoring-only mode needs no API keys. For the AI test-generation loop,
+# add your provider key as a repository secret (e.g. OPENAI_API_KEY).
+
+name: mutest
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  mutation-testing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for --incremental (git diff vs HEAD)
+
+      - name: Run mutest
+        id: mutest
+        uses: chenyi6758-source/mutest@v0.1.0
+        with:
+          src: src
+          tests: tests
+          incremental: "true"
+          # model: gpt-4o-mini   # uncomment + set OPENAI_API_KEY secret for AI loop
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Comment mutation score on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const raw = `${{ steps.mutest.outputs.score }}`;
+            let summary;
+            try {
+              const s = JSON.parse(raw);
+              const pct = (s.score * 100).toFixed(1);
+              summary = `## 🧬 mutest — mutation score: **${pct}%**\n\n` +
+                `| killed | survived | total | errors |\n` +
+                `|---|---|---|---|\n` +
+                `| ${s.killed} | ${s.survived} | ${s.total} | ${s.error} |\n\n` +
+                `_Full HTML report is attached as a workflow artifact._`;
+            } catch (e) {
+              summary = `## 🧬 mutest\n\nCould not parse score output:\n\`\`\`\n${raw}\n\`\`\``;
+            }
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

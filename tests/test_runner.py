@@ -6,10 +6,14 @@ import pytest
 
 from mutest.mutators import generate_mutants
 from mutest.runner import (
+    AUTO_WORKER_LIMIT,
     KILLED,
     SURVIVED,
     BaselineError,
     RunSummary,
+    _Worker,
+    _automatic_worker_count,
+    _effective_worker_count,
     check_baseline,
     run_mutants,
     sanitize_environment,
@@ -32,6 +36,44 @@ def test_baseline_red_raises(tmp_path):
     (tests / "test_m.py").write_text("def test_f():\n    assert False\n")
     with pytest.raises(BaselineError):
         check_baseline(src, tests, timeout=60)
+
+
+def test_sibling_project_context_preserves_root_fixture_without_copying_repo(tmp_path):
+    project = tmp_path / "project"
+    src = project / "src"
+    tests = project / "tests"
+    src.mkdir(parents=True)
+    tests.mkdir()
+    (project / "conftest.py").write_text(
+        "import pytest\n\n"
+        "@pytest.fixture\n"
+        "def project_marker():\n"
+        "    return 'from root conftest'\n"
+    )
+    (project / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n")
+    (project / ".env").write_text("SHOULD_NOT_BE_COPIED=secret\n")
+    (src / "module.py").write_text("def value():\n    return 1\n")
+    (tests / "test_context.py").write_text(
+        "def test_root_fixture(project_marker):\n"
+        "    assert project_marker == 'from root conftest'\n"
+    )
+
+    worker = _Worker(src, tests)
+    try:
+        assert (worker.root / "conftest.py").exists()
+        assert (worker.root / "pytest.ini").exists()
+        assert not (worker.root / ".env").exists()
+        rc, out = worker.run_pytest(timeout=60)
+    finally:
+        worker.close()
+    assert rc == 0, out
+    assert "1 passed" in out
+
+
+def test_automatic_worker_count_is_bounded_but_explicit_values_are_not(monkeypatch):
+    monkeypatch.setattr("mutest.runner.os.cpu_count", lambda: 128)
+    assert _automatic_worker_count() == AUTO_WORKER_LIMIT
+    assert _effective_worker_count(12) == 12
 
 
 def _mutants_by_desc():

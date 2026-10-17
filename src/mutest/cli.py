@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -23,6 +24,44 @@ from mutest.runner import (
     run_mutants,
 )
 from mutest.report import write_report
+
+
+THRESHOLD_FAILURE = 4
+
+
+def _percentage(value: str) -> float:
+    """Parse a finite percentage-point value in the inclusive 0-100 range."""
+    try:
+        percentage = float(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError("must be a number between 0 and 100") from e
+    if not math.isfinite(percentage) or not 0 <= percentage <= 100:
+        raise argparse.ArgumentTypeError("must be a number between 0 and 100")
+    return percentage
+
+
+def _threshold_failure_reasons(summary, fail_under: float | None) -> list[str]:
+    """Return CI failure reasons for an explicitly requested score threshold."""
+    if fail_under is None:
+        return []
+    reasons = []
+    score_percentage = summary.score * 100
+    if score_percentage < fail_under:
+        reasons.append(
+            f"mutation score {score_percentage:.1f}% is below --fail-under "
+            f"{fail_under:g}%"
+        )
+    incomplete = []
+    if summary.timeout:
+        incomplete.append(f"{summary.timeout} timeout(s)")
+    if summary.error:
+        incomplete.append(f"{summary.error} error(s)")
+    if incomplete:
+        reasons.append(
+            "mutation run has " + " and ".join(incomplete) +
+            "; thresholded runs require every mutant to complete"
+        )
+    return reasons
 
 
 def _is_test_file(path: Path) -> bool:
@@ -83,11 +122,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--top-n", type=int, default=10,
                    help="survived mutants to target with AI tests (default: 10)")
     p.add_argument("--workers", type=int, default=0,
-                   help="parallel mutant runs (default: cpu_count - 1)")
+                   help="parallel mutant runs (default: cpu_count - 1, capped at 8; "
+                        "explicit values are honored)")
     p.add_argument("--timeout", type=int, default=120,
                    help="per-mutant pytest timeout in seconds (default: 120)")
     p.add_argument("--output", "-o", default="mutest-report.html",
                    help="HTML report path (default: mutest-report.html)")
+    p.add_argument("--fail-under", type=_percentage, default=None, metavar="PERCENT",
+                   help="fail if the final mutation score is below this percentage "
+                        "(0-100); when set, timeout/error outcomes also fail")
     p.add_argument("--config", "-c", default=None, help="path to mutest.yaml")
     p.add_argument("--no-llm", action="store_true",
                    help="skip AI test generation even if --model is set")
@@ -333,11 +376,15 @@ def main(argv: list[str] | None = None) -> int:
     write_report(args.output, ctx)
     print(f"report written to {args.output}")
 
+    threshold_reasons = _threshold_failure_reasons(summary, args.fail_under)
+    if threshold_reasons:
+        print("FAIL: " + "; ".join(threshold_reasons), file=sys.stderr)
+
     if args.json:
         payload = {"version": __version__, **summary.as_dict(),
                    "output": args.output}
         print(json.dumps(payload))
-    return 0
+    return THRESHOLD_FAILURE if threshold_reasons else 0
 
 
 def _resummarize(results):

@@ -1,9 +1,10 @@
 """Execute the test suite against each mutant, in parallel.
 
 Design: one temp workspace per worker thread (a pristine copy of the source
-and test trees). For each mutant the worker overwrites the single mutated
-file, runs ``python -m pytest`` with ``-x`` (stop at first failure — we only
-need to know whether the suite detects the change), then restores the file.
+and test trees plus allowlisted root-level pytest context). For each mutant
+the worker overwrites the single mutated file, runs ``python -m pytest`` with
+``-x`` (stop at first failure — we only need to know whether the suite detects
+the change), then restores the file.
 """
 
 from __future__ import annotations
@@ -26,6 +27,11 @@ KILLED = "killed"
 SURVIVED = "survived"
 TIMEOUT = "timeout"
 ERROR = "error"
+
+# A large machine should not create one Python process per CPU by default.
+# Positive --workers values are passed through unchanged; this only limits the
+# automatic value selected when workers is zero or negative.
+AUTO_WORKER_LIMIT = 8
 
 
 @dataclass
@@ -110,6 +116,7 @@ class _Worker:
             self.tests = self.src
         else:
             shutil.copytree(tests_dir, self.tests, ignore=no_cache)
+        self._copy_project_context(src_dir, tests_dir)
         # remember pristine bytes of every file we may overwrite
         self._pristine: dict[str, bytes] = {}
         for base in {self.src, self.tests}:
@@ -120,6 +127,25 @@ class _Worker:
         # pytest target relative to the workspace root ("tests", or "src"
         # when src and tests are the same directory)
         self._tests_arg = self.tests.relative_to(self.root).as_posix()
+
+    def _copy_project_context(self, src_dir: Path, tests_dir: Path) -> None:
+        """Copy only root-level pytest context for sibling source/test trees.
+
+        A temporary workspace must not become a copy of the whole project:
+        that could include secrets, build outputs, or unrelated application
+        data.  These are the standard files pytest uses to discover project
+        fixtures and configuration, so copy only the explicit allowlist when
+        ``src`` and ``tests`` share a project root.
+        """
+        src_root = src_dir.resolve().parent
+        tests_root = tests_dir.resolve().parent
+        if src_root != tests_root:
+            return
+        for name in ("conftest.py", "pytest.ini", "pyproject.toml",
+                     "setup.cfg", "tox.ini"):
+            source = src_root / name
+            if source.is_file():
+                shutil.copy2(source, self.root / name)
 
     def _write_mutant(self, mutant: Mutant) -> None:
         target = self.src / mutant.file
@@ -221,8 +247,7 @@ def run_mutants(
     import time
 
     t0 = time.time()
-    if workers <= 0:
-        workers = max(1, (os.cpu_count() or 2) - 1)
+    workers = _effective_worker_count(workers)
     results: list[MutantResult] = []
     # One workspace per OS thread, bound via thread-local storage.
     # (Task indices must NOT be used to pick a workspace: the pool hands
@@ -267,3 +292,13 @@ def run_mutants(
         else:
             summary.error += 1
     return results, summary
+
+
+def _automatic_worker_count() -> int:
+    """Return the bounded worker count used when no explicit value is set."""
+    return min(max(1, (os.cpu_count() or 2) - 1), AUTO_WORKER_LIMIT)
+
+
+def _effective_worker_count(workers: int) -> int:
+    """Resolve automatic workers while preserving every explicit positive value."""
+    return workers if workers > 0 else _automatic_worker_count()

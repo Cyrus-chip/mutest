@@ -27,6 +27,7 @@ jobs:
         with:
           src: src
           tests: tests
+          # fail-under: "75"  # threshold in percentage points; also fails on timeout/error
           incremental: "true"
           base-ref: ${{ github.event.pull_request.base.sha }}
           # model: gpt-4o-mini   # uncomment + set OPENAI_API_KEY secret for AI loop

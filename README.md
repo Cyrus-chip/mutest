@@ -39,15 +39,18 @@ Full HTML report from this run: [`examples/sample_calc/report.html`](examples/sa
 ## 🚀 Quickstart
 
 ```bash
-pip install mutest        # coming to PyPI with v0.1.0; until then:
+pip install mutest        # scoring only; keeps the installation lightweight
+pip install "mutest[ai]"  # add the optional litellm dependency for --model
+# Until v0.1.0 is on PyPI, use one of these instead:
 pip install "mutest @ git+https://github.com/chenyi6758-source/mutest"
+pip install "mutest[ai] @ git+https://github.com/chenyi6758-source/mutest"
 
 cd your-python-project
 mutest --src src --tests tests --no-llm        # scoring only, no API key needed
-mutest --src src --tests tests --model gpt-4o-mini   # + AI test-generation loop
+mutest --src src --tests tests --model gpt-4o-mini   # requires mutest[ai]
 ```
 
-Requirements: Python 3.10+, a green `pytest` suite (mutest refuses to run on a red baseline).
+Requirements: Python 3.10+, a green `pytest` suite (mutest refuses to run on a red baseline). `litellm` is optional: install `mutest[ai]` only when using `--model` or `--verify-model`.
 
 With `--model`, mutest takes the top survived mutants, asks the LLM for one targeted test each, writes them to `tests/test_mutest_gen.py`, then **empirically verifies**: the new tests must pass on your original code and fail on the mutant. Score goes up only when the tests *provably* kill.
 
@@ -55,7 +58,7 @@ With `--model`, mutest takes the top survived mutants, asks the LLM for one targ
 
 1. **Mutate** — 10 AST operators (AOR/ROR/LOR/NOT/NEGCOND/NUM/STR/RETNONE/RETBOOL/UNARY) generate one mutant per site. Every mutant is re-parsed; no-ops and duplicates are dropped.
 2. **Execute** — each mutant runs your full `pytest` suite in an isolated temp workspace, in parallel (`-x`: stop at first failure, we only need to know *whether* it's caught).
-3. **Generate** — for the worst survivors, the LLM writes targeted tests (`--model`, any litellm provider; keys via standard env vars, never stored).
+3. **Generate** — for the worst survivors, the LLM writes targeted tests (`--model`, any litellm provider; install `mutest[ai]`; keys use standard env vars and are never stored).
 4. **Cross-validate** — optional `--verify-model` (a *different* provider) judges each generated test, then the empirical run confirms it: passes on original, fails on mutant.
 5. **Report** — single-file HTML: score cards, per-file breakdown, every survivor with an original/mutated diff, generated tests.
 
@@ -77,7 +80,8 @@ With `--model`, mutest takes the top survived mutants, asks the LLM for one targ
 --model gpt-4o-mini        LLM for test generation (any litellm model string)
 --verify-model claude-haiku-4-5   second provider judges generated tests
 --top-n 10                 survived mutants to target
---workers 4 / --timeout 120
+--workers 4 / --timeout 120  (automatic workers are capped at 8; explicit values are honored)
+--fail-under 75             fail CI below a final 75 percentage-point score
 --incremental              only mutate files changed vs git HEAD (PR runs)
 --base-ref BASE            PR base revision; compare BASE...HEAD with --incremental
 --json                     print {"score": ...} for CI
@@ -93,6 +97,7 @@ Environment: `MUTEST_MODEL`, `MUTEST_LLM_PROVIDER=fake` (offline demos/tests).
   with:
     src: src
     tests: tests
+    # fail-under: "75"      # also fails when any mutant times out or errors
     incremental: "true"     # only changed files on PRs
     base-ref: ${{ github.event.pull_request.base.sha }}
 ```

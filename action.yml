@@ -1,0 +1,81 @@
+name: "mutest"
+description: "Mutation-testing-driven AI test generation — measure test quality with mutation score, not line coverage"
+branding:
+  icon: "zap"
+  color: "purple"
+
+inputs:
+  src:
+    description: "Source directory to mutate"
+    required: false
+    default: "src"
+  tests:
+    description: "Test directory"
+    required: false
+    default: "tests"
+  model:
+    description: "LLM for AI test generation (litellm format, e.g. gpt-4o-mini). Omit to run scoring only."
+    required: false
+    default: ""
+  verify-model:
+    description: "Second LLM for cross-model validation of generated tests"
+    required: false
+    default: ""
+  top-n:
+    description: "Survived mutants to target with AI tests"
+    required: false
+    default: "10"
+  workers:
+    description: "Parallel mutant executions (0 = auto)"
+    required: false
+    default: "0"
+  timeout:
+    description: "Per-mutant pytest timeout in seconds"
+    required: false
+    default: "120"
+  incremental:
+    description: "Only mutate files changed vs git HEAD (set to 'true' for PR runs)"
+    required: false
+    default: "false"
+  report-path:
+    description: "Where to write the HTML report"
+    required: false
+    default: "mutest-report.html"
+
+outputs:
+  score:
+    description: "Mutation score as JSON (killed/total)"
+    value: ${{ steps.run.outputs.score }}
+  report:
+    description: "Path of the generated HTML report"
+    value: ${{ inputs.report-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install mutest
+      shell: bash
+      run: pip install "mutest @ git+https://github.com/chenyi6758-source/mutest@v0.1.0"
+    - name: Run mutest
+      id: run
+      shell: bash
+      env:
+        OPENAI_API_KEY: ${{ env.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ env.ANTHROPIC_API_KEY }}
+      run: |
+        ARGS="--src '${{ inputs.src }}' --tests '${{ inputs.tests }}' --top-n '${{ inputs.top-n }}' --workers '${{ inputs.workers }}' --timeout '${{ inputs.timeout }}' --output '${{ inputs.report-path }}' --json"
+        if [ -n "${{ inputs.model }}" ]; then ARGS="$ARGS --model '${{ inputs.model }}'"; fi
+        if [ -n "${{ inputs.verify-model }}" ]; then ARGS="$ARGS --verify-model '${{ inputs.verify-model }}'"; fi
+        if [ "${{ inputs.incremental }}" = "true" ]; then ARGS="$ARGS --incremental"; fi
+        OUT=$(mutest $ARGS | tail -1)
+        echo "score=$OUT" >> "$GITHUB_OUTPUT"
+        echo "$OUT"
+    - name: Upload HTML report
+      uses: actions/upload-artifact@v4
+      with:
+        name: mutest-report
+        path: ${{ inputs.report-path }}
